@@ -1,4 +1,4 @@
-macro "Trash_Panda_40+100_v4.0" {
+macro "Trash_Panda_v4.0" {
 	chosenDirectory = getDirectory("Choose your folder");
 	saveDirectory = getDirectory("Choose your folder to save the results");
 	processFiles2(chosenDirectory);	//necessary to run the function
