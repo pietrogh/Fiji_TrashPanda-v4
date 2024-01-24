@@ -1,0 +1,39 @@
+macro "Trash_Panda_40+100_v4.0" {
+	chosenDirectory = getDirectory("Choose your folder");
+	saveDirectory = getDirectory("Choose your folder to save the results");
+	processFiles2(chosenDirectory);	//necessary to run the function
+
+	setBatchMode(true);
+	//define the function
+function processFiles2(currentDir) {
+
+	fileList = getFileList(currentDir);
+	
+	for(i=0; i<fileList.length; i++) {
+		
+		if(matches(fileList[i], ".*_488_.*")) {
+			open(currentDir+fileList[i]);
+			//here goes your processing code
+			imageName = getTitle();
+			run("Z Project...", "projection=[Average Intensity]"); // quantification of the 100 nm Green into the 488 channel
+			run("Find Maxima...", "prominence=500 strict exclude output=Count");
+			saveAs("Results", saveDirectory + imageName + "_100nmGreen" + ".csv");
+			run("Clear Results");
+			run("Close All");
+		}
+		else if(matches(fileList[i], ".*_532_.*")) {
+			open(currentDir+fileList[i]);
+			//here goes your processing code
+			imageName = getTitle();
+			run("Z Project...", "projection=[Average Intensity]");
+			run("Subtract...", "value=125");
+			run("Mean...", "radius=2");
+			run("Find Maxima...", "prominence=30 strict exclude output=Count");
+			saveAs("Results", saveDirectory + imageName + "_40nmRed" + ".csv");
+			run("Clear Results");
+			run("Close All");
+		}
+	}
+}
+	setBatchMode(false);
+}
