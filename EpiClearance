@@ -1,0 +1,314 @@
+########################################
+
+#calculation of NPs clearance within CSF - in vivo exp
+
+##################################
+require(tidyverse)
+require(rstatix)
+library(ggpubr)
+library(ggpattern)
+
+################################################################################################################
+
+#defines variables
+
+exp_date <- "14-12-23"
+mouse_age <- "3-months"
+genotype <- "WT"
+sex <- "male"
+DOB <- "26/09/2023"
+weight <- "26"
+rep <- "Rep 7"
+col1 <- "Red"
+col2 <- "Green"
+size1 <- "40 nm"
+size2 <- "100 nm"
+sample1 <- "CSF"
+sample2 <- "MIX"
+sample3 <- "CAP"
+sample4 <- "BLANK"
+csf_dilution <- 50
+mix_and_syr_dilution <- 500000
+col1_wavelength <- if (col1 == "Green"){
+  paste("_488_")
+} else if (col1 == "Red"){
+  paste("_532_")
+} else if (col1 == "Dark_Red"){
+  paste("_647_")
+}
+
+col2_wavelength <- if (col2 == "Green"){
+  paste("_488_")
+} else if (col2 == "Red"){
+  paste("_532_")
+} else if (col2 == "Dark_Red"){
+  paste("_647_")
+}
+
+col1_plot_fill <- if (col1 == "Green"){
+  paste("cyan")
+} else if (col1 == "Red"){
+  paste("magenta")
+} else if (col1 == "Dark_Red"){
+  paste("orange")
+}
+
+col2_plot_fill <- if (col2 == "Green"){
+  paste("cyan")
+} else if (col2 == "Red"){
+  paste("magenta")
+} else if (col2 == "Dark_Red"){
+  paste("orange")
+}
+
+
+#################################################################################################################
+
+#read the csv results
+
+#################################################################################################################
+# Find all .csv files
+files_NPs <- list.files(path = "F:/Analysis/TIRF/Size_dependency_clearance_paper/2023-12-14_40nmRed+100nmGreen_3-months_WT_CSF/Images", pattern = "*.csv", full.names=TRUE, recursive = TRUE)
+
+
+# function to read and analyse all the internalized NPs 
+
+analyse_NPs_csv <- function(f){
+  df <- read_csv(f, col_select = "Count")
+  df <- select(df, Count)
+}
+
+# Apply the analyse_csv function to all the CSV files
+
+result_NPs_count <- sapply(files_NPs, analyse_NPs_csv)
+result_NPs_count <- as_tibble_col(result_NPs_count)
+result_NPs_count <- dplyr::rename(result_NPs_count, NPs_count = value)
+#result_NPs_count <- replace(result_NPs_count$NPs_count, which(result_NPs_count$NPs_count == 0), 1)
+#result_NPs_count <- as_tibble_col(result_NPs_count)
+#result_NPs_count <- dplyr::rename(result_NPs_count, NPs_count = value)
+
+# function to read and keep the names of the samples
+
+analyse_label_csv <- function(f){
+  df <- read_csv(f, col_names = T, col_select = Label)
+  df <- select(df, Label)
+}
+
+# Apply the analyse_csv function to all the CSV files
+
+result_NPs_label <- sapply(files_NPs, analyse_label_csv)
+result_NPs_label <- as_tibble_col(result_NPs_label)
+result_NPs_label <- dplyr::rename(result_NPs_label, Label = value)
+result_NPs_label$sample <- ifelse(grepl(sample1, result_NPs_label$Label, ignore.case = T), sample1,
+                                  ifelse(grepl(sample2, result_NPs_label$Label, ignore.case = T), toupper(sample2), 
+                                         ifelse(grepl(sample3, result_NPs_label$Label, ignore.case = T),toupper(sample3), sample4)))
+
+result_NPs_label$colour <- ifelse(grepl(col1_wavelength, result_NPs_label$Label), col1, col2)
+result_NPs_label <- select(result_NPs_label, sample, colour)
+
+#combining the the two data frames
+
+results <- cbind(result_NPs_label, result_NPs_count)
+results$colour <- as_factor(results$colour)
+results$sample <- as_factor(results$sample)
+results$NPs_count <- as.double(results$NPs_count)
+
+#################################################
+#subtracting the number of Green NPs from the Red NPs 
+#################################################
+
+results <- results %>%
+  group_by(sample) %>%
+  pivot_wider(names_from = colour,values_from = NPs_count)
+
+results <- as_tibble(results)
+
+results <- unnest(results)
+
+results$Red <- results$Red - results$Green
+
+results <- results %>%
+  pivot_longer(cols = -c("sample"), names_to = "colour", values_to = "NPs_count")
+
+results$colour <- as_factor(results$colour)
+
+#################################################
+#moltiplying the number of NPs for the dilution used before imaging
+#################################################
+
+results$NPs_count_f <- ifelse(grepl("CSF", results$sample, ignore.case = T), results$NPs_count * csf_dilution, 
+                              ifelse(grepl("MIX", results$sample, ignore.case = T) | grepl("CAP", results$sample, ignore.case = T), results$NPs_count * mix_and_syr_dilution, results$NPs_count * 1))
+
+##############################################################
+#do the percentage 
+##############################################################
+
+results$colour <- ordered(results$colour, levels = c("Red", "Green"))
+
+CSF <- filter(results, sample == "CSF")
+MIX <- filter(results, sample == "MIX")
+#CAP <- filter(results, sample == "CAP")
+
+MIX_median <- MIX %>%
+  group_by(colour) %>%
+  summarise_at(vars(NPs_count_f), list(name = median))
+
+#CAP_median <- CAP %>%
+# group_by(colour) %>%
+#summarise_at(vars(NPs_count_f), list(name = median))
+
+#calculate the percentage based on the median of NPs in the inj mix
+
+CSF$MIX_median <- ifelse(CSF$colour == "Green", MIX_median[2,2], MIX_median[1,2])
+CSF$MIX_median <- as.numeric(CSF$MIX_median)
+CSF$Percentage_MIX <- (CSF$NPs_count_f / CSF$MIX_median) * 100
+
+#calculate the percentage based on the median of NPs in the syr leftover
+
+#CSF$CAP_median <- ifelse(CSF$colour == "Green", CAP_median[1,2], 
+# ifelse(CSF$colour == "Dark_Red", CAP_median[2,2],CAP_median[3,2]))
+#CSF$CAP_median <- as.numeric(CSF$CAP_median)
+#CSF$Percentage <- (CSF$NPs_count_f / CSF$CAP_median) * 100
+CSF <- cbind(CSF, sex, weight, DOB, mouse_age, genotype, rep)
+
+CSF$colour <- ordered(CSF$colour, levels = c("Red", "Green"))
+
+##############################################################
+#calculate the median of NPs in the CSF to generate plots in prism
+##############################################################
+
+data_summary <- function(data, varname, groupnames){
+  require(plyr)
+  summary_func <- function(x, col){
+    c(mean = mean(x[[col]], na.rm=TRUE),
+      sd = sd(x[[col]], na.rm=TRUE))
+  }
+  data_sum<-ddply(data, groupnames, .fun=summary_func,
+                  varname)
+  data_sum <- rename(data_sum, c("mean" = varname))
+  return(data_sum)
+}
+
+CSF_summary <- data_summary(CSF, varname="NPs_count", 
+                            groupnames=c("colour", "sex", "mouse_age", "genotype", "rep"))
+
+head(CSF_summary)
+
+data_paired <- CSF_summary %>% pivot_wider(names_from = colour, values_from = NPs_count)
+
+CSF_summary_percentage <- data_summary(CSF, varname="Percentage_MIX", 
+                                       groupnames=c("colour", "sex", "mouse_age", "genotype", "rep"))
+
+head(CSF_summary_percentage)
+
+data_paired_percentage <- CSF_summary_percentage %>% pivot_wider(names_from = colour, values_from = Percentage_MIX)
+
+
+##############################################################
+#Statistical analysis 
+##############################################################
+
+#shapiro test
+
+shapiro <- CSF %>%
+  #group_by(colour) %>%
+  shapiro_test(Percentage_MIX)
+
+#anova test
+
+anova <- CSF %>%
+  anova_test(Percentage_MIX ~ colour)
+anova_table <- get_anova_table(anova, correction = "GG")
+
+#tukey test
+
+tukey <- aov(Percentage_MIX ~ colour, data = CSF) %>% 
+  tukey_hsd() 
+
+#kruskal wallis test
+
+kruskal<- CSF %>%
+  kruskal_test(Percentage_MIX ~ colour)
+
+#pairwise wilcox test
+
+wilcox <- CSF %>%
+  pairwise_wilcox_test(Percentage_MIX ~ colour, p.adjust.method = "BH") %>%
+  add_significance() %>%
+  add_xy_position()
+
+
+###################################################################
+#plot the results 
+###################################################################
+
+#check the quantity of NPs between the two different colours
+
+###################################################################
+labticks <- c(paste(size1, col1), paste(size2, col2))
+
+
+############################################
+#single plots of the 11-03 exp
+############################################
+
+
+mix_plot <- MIX %>%
+  ggplot(aes(colour, log(NPs_count_f), fill = colour)) +
+  geom_boxplot(alpha = 0.8) +
+  stat_boxplot(geom ='errorbar', width = 0.25, size = 1) +
+  geom_jitter() +
+  labs(title = paste("Mix of NPs before injection", exp_date)) +
+  theme_classic() +
+  xlab("Nanoparticle type") + 
+  ylab("Log of NPs Count") +
+  scale_y_continuous(limits = c(log(min(MIX$NPs_count_f))-1, log(max(MIX$NPs_count_f))+1), expand = c(0,0)) + 
+  scale_x_discrete(labels = labticks) +
+  scale_fill_manual(values = c(col1_plot_fill, col2_plot_fill)) +
+  theme_classic() +
+  theme(legend.position = "none", axis.line = element_line(size = 1), axis.ticks = element_line(size = 1.5), axis.text =  element_text(size = 15), axis.title = element_text(size = 15)) 
+
+mix_plot
+
+csf_plot <- CSF %>%
+  ggplot(aes(colour, NPs_count, fill = colour)) +
+  geom_boxplot(alpha = 0.8) +
+  stat_boxplot(geom ='errorbar', width = 0.25, size = 1) +
+  geom_jitter() +
+  labs(title = paste("NPs cleared within the CSF injection", exp_date)) +
+  theme_classic() +
+  xlab("Nanoparticle type") + 
+  ylab("AVG NPs Count per FOV") +
+  #scale_y_continuous(limits = c(log(min(CSF$NPs_count_f))-1, log(max(CSF$NPs_count_f))+1), expand = c(0,0)) +
+  scale_x_discrete(labels = labticks) +
+  scale_fill_manual(values = c(col1_plot_fill, col2_plot_fill)) +
+  theme_classic() +
+  theme(legend.position = "none", axis.line = element_line(size = 1), axis.ticks = element_line(size = 1.5), axis.text =  element_text(size = 15), axis.title = element_text(size = 15)) 
+#ggarrange(mix_3_plot, csf_3_plot, mix_1_plot,csf_1_plot,mix_2_plot, csf_2_plot, ncol = 2, nrow = 3)
+
+csf_plot
+
+percentage_plot_scientific <- CSF %>%
+  ggplot(aes(colour, Percentage_MIX, fill = colour)) +
+  geom_boxplot(alpha = 0.8) +
+  stat_boxplot(geom ='errorbar', width = 0.25, size = 1) +
+  geom_jitter() +
+  labs(title = paste("Experiment done on the", exp_date)) +
+  theme_classic()+
+  xlab("Nanoparticle type") + 
+  ylab("Percentage of NPs \ncleared  within the CSF") +
+  #scale_y_continuous(limits = c(-0.0025, 0.01), expand = c(0,0), labels = scales::scientific) + 
+  scale_x_discrete(labels = labticks) +
+  scale_fill_manual(values = c(col1_plot_fill, col2_plot_fill)) +
+  theme_classic() +
+  theme(legend.position = "none", axis.line = element_line(size = 1), axis.ticks = element_line(size = 1.5), axis.text =  element_text(size = 15), axis.title = element_text(size = 15))
+
+percentage_plot_scientific
+
+
+write_csv(results, paste("results", exp_date, mouse_age, genotype, rep, ".csv", sep = "_"), col_names =T)
+write_csv(MIX, paste("mix", exp_date, mouse_age, genotype, rep, ".csv", sep = "_"), col_names = T)
+#write_csv(CAP, paste("cap", exp_date, mouse_age, genotype, rep, ".csv", sep = "_"), col_names = T)
+write_csv(CSF, paste("csf", exp_date, mouse_age, genotype, rep, ".csv", sep = "_"), col_names = T)
+write_csv(data_paired, paste("data_paired", exp_date, mouse_age, genotype, rep, ".csv", sep = "_"), col_names = T)
+
